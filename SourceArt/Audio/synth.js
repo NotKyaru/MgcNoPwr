@@ -50,12 +50,18 @@ function loopKit(BPM,bars){const beat=60/BPM,bar=4*beat,N=Math.round(bars*bar*R)
   return {beat,bar,N,at,lpc,layer,put}}
 const THEME_CHORDS=[[38,45,53,57],[34,46,50,53],[31,43,46,50],[33,45,49,52]]; // Dm, Bb, Gm, A (harmonic-minor dominant), 4 bars each
 // soft detuned organ chord per 4 bars with a slow swell
-function padLayer(K,chords){const {at,bar,layer,put}=K;const pad=layer();chords.forEach((ch,c)=>{const s=at(c*4,0),len=Math.round(4*bar*R),rel=Math.round(0.8*R);
+function padLayer(K,chords,barsPer=4){const {at,bar,layer,put}=K;const pad=layer();chords.forEach((ch,c)=>{const s=at(c*barsPer,0),len=Math.round(barsPer*bar*R),rel=Math.round(0.8*R);
     for(const m of ch){const f=hz(m+12);for(let k=0;k<len+rel;k++){const t=k/R,env=Math.min(1,t/0.8)*(k>len?1-(k-len)/rel:1)*(0.75+0.25*Math.sin(2*Math.PI*t/(2*bar)));
       let v=0;for(const d of [0.997,1.003]){const p=2*Math.PI*f*d*t;v+=Math.sin(p)+0.45*Math.sin(2*p)+0.2*Math.sin(3*p)}put(pad,s+k,v*env)}}});return pad}
 // repeating echo, filtered darker than the dry signal
 function withEcho(K,dry,delayBeats,fb,fc){const {beat,N,layer,put,lpc}=K;const D=Math.round(beat*delayBeats*R),echo=layer();
   for(let i=0;i<N;i++)for(let r=1;r<=4;r++)put(echo,i+r*D,dry[i]*Math.pow(fb,r));return lpc(mix(dry,lpc(echo,fc)),5000)}
+// music-box bell: decaying sine plus inharmonic partials
+function bellNote(K,L,s,f,len){for(let k=0;k<len;k++){const t=k/R,a=Math.min(1,k/30),v=Math.sin(2*Math.PI*f*t)*Math.exp(-t/0.9)+0.45*Math.sin(2*Math.PI*f*2.76*t)*Math.exp(-t/0.25)+0.2*Math.sin(2*Math.PI*f*5.4*t)*Math.exp(-t/0.08);
+  K.put(L,s+k,v*a*Math.min(1,(len-k)/400))}}
+// "lub-dub" heartbeat on the first beat of the given bars
+function heartbeat(K,bars){const heart=K.layer(),lub=thump(0.4,75,42,0.03,0.09),dub=thump(0.4,68,40,0.03,0.07);
+  for(const b of bars){const s=K.at(b,0);for(let k=0;k<lub.length;k++){K.put(heart,s+k,lub[k]);K.put(heart,s+Math.round(0.32*R)+k,dub[k]*0.7)}}return heart}
 // main theme melody [bar, beat, midi, beats], used by the arena lead and (slowed down) by the menu music box
 const THEME=[[4,0,74,1.5],[4,1.5,77,0.5],[4,2,76,1],[4,3,74,1],[5,0,70,2],[5,2,69,2],[6,0,74,1.5],[6,1.5,77,0.5],[6,2,79,1],[6,3,77,0.5],[6,3.5,76,0.5],[7,0,74,3],
     [8,0,79,1],[8,1,77,1],[8,2,75,2],[9,0,74,1.5],[9,1.5,70,0.5],[9,2,67,2],[10,0,70,1],[10,1,74,1],[10,2,79,1],[10,3,82,1],[11,0,81,2],[11,2,79,1],[11,3,77,1],
@@ -89,15 +95,26 @@ const THEME=[[4,0,74,1.5],[4,1.5,77,0.5],[4,2,76,1],[4,3,74,1],[5,0,70,2],[5,2,6
 (()=>{const K=loopKit(72,16),{beat,bar,N,at,lpc,layer,put}=K;
   const padL=lpc(lpc(padLayer(K,THEME_CHORDS),700),700);
   const box=layer();
-  for(const [b,bt,m,d] of THEME.filter(n=>n[0]>=4&&n[0]<=11)){const beats=((b-4)*4+bt)*2,f=hz(m+12),s=at(Math.floor(beats/4),beats%4),len=Math.round(Math.min(d*2,3)*beat*R);
-    for(let k=0;k<len;k++){const t=k/R,a=Math.min(1,k/30),v=Math.sin(2*Math.PI*f*t)*Math.exp(-t/0.9)+0.45*Math.sin(2*Math.PI*f*2.76*t)*Math.exp(-t/0.25)+0.2*Math.sin(2*Math.PI*f*5.4*t)*Math.exp(-t/0.08);
-      put(box,s+k,v*a*Math.min(1,(len-k)/400))}}
+  for(const [b,bt,m,d] of THEME.filter(n=>n[0]>=4&&n[0]<=11)){const beats=((b-4)*4+bt)*2;bellNote(K,box,at(Math.floor(beats/4),beats%4),hz(m+12),Math.round(Math.min(d*2,3)*beat*R))}
   const boxL=withEcho(K,box,1,0.45,3000);
-  const heart=layer(),lub=thump(0.4,75,42,0.03,0.09),dub=thump(0.4,68,40,0.03,0.07);
-  for(let b=0;b<16;b++){const s=at(b,0);for(let k=0;k<lub.length;k++){put(heart,s+k,lub[k]);put(heart,s+Math.round(0.32*R)+k,dub[k]*0.7)}}
+  const heart=heartbeat(K,[...Array(16).keys()]);
   const wind=layer();let br=0;for(let i=0;i<N;i++){br=0.997*br+0.04*noise();wind[i]=br*(0.55+0.45*Math.sin(2*Math.PI*i/N*2))} // 2 swells per loop so it wraps cleanly
   const n=x=>norm(x,1),o=new Float32Array(N),P=n(padL),Bx=n(boxL),H=n(lpc(heart,300)),W=n(lpc(hp(wind,150),600));
   for(let i=0;i<N;i++)o[i]=Math.tanh(0.32*P[i]+0.3*Bx[i]+0.3*H[i]+0.1*W[i]);
   S.MUS_Menu=norm(o,0.8)})();
+// game over music: slow lament, 60 BPM, 8-bar loop. Descending bass D-C-Bb-A under the theme chords, a fading
+// heartbeat every other bar and the theme's opening falling apart on the music box, leading back to D.
+(()=>{const K=loopKit(60,8),{beat,bar,N,at,lpc,layer,put}=K;
+  const chords=[[38,45,50,53],[36,45,50,53],[34,46,50,53],[33,45,49,52]]; // Dm, Dm/C, Bb, A
+  const padL=lpc(lpc(padLayer(K,chords,2),600),600);
+  const bass=layer();chords.forEach((ch,c)=>{const f=hz(ch[0]-12),s=at(c*2,0),len=Math.round(2*bar*R),rel=Math.round(0.6*R);
+    for(let k=0;k<len+rel;k++){const t=k/R,env=Math.min(1,t/0.5)*(k>len?1-(k-len)/rel:1),p=2*Math.PI*f*t;put(bass,s+k,(Math.sin(p)+0.35*Math.sin(2*p))*env)}});
+  const box=layer(),mel=[[0,0,74,2],[0,2,77,2],[1,0,76,4],[2,0,74,2],[2,2,70,2],[3,0,69,4],[4,0,74,2],[4,2,72,2],[5,0,70,4],[6,0,69,2],[6,2,74,2],[7,0,76,2],[7,2,73,2]];
+  for(const [b,bt,m,d] of mel)bellNote(K,box,at(b,bt),hz(m+12),Math.round(Math.min(d,3)*beat*R));
+  const boxL=withEcho(K,box,1.5,0.4,2500);
+  const heart=heartbeat(K,[0,2,4,6]);
+  const n=x=>norm(x,1),o=new Float32Array(N),P=n(padL),Bs=n(lpc(bass,400)),Bx=n(boxL),H=n(lpc(heart,300));
+  for(let i=0;i<N;i++)o[i]=Math.tanh(0.32*P[i]+0.28*Bs[i]+0.32*Bx[i]+0.2*H[i]);
+  S.MUS_GameOver=norm(o,0.8)})();
 const ONLY=(process.argv[3]||"").split(",").filter(Boolean);
 for(const k in S){if(ONLY.length&&!ONLY.includes(k))continue;writeWav(out+'/'+k+'.wav',S[k],R);console.log(k,(S[k].length/R).toFixed(2)+'s')}
